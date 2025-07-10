@@ -3,11 +3,12 @@ import json
 import time
 import logging
 from datetime import datetime, timezone
-import itertools
+import itertools  # For cycling through tokens
 
-# Logging for the extractor
+# Configure logging for the extractor
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.CRITICAL,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,9 @@ class GitHubExtractor:
         """Cycles to the next API token in the list."""
         self._current_token = next(self._token_cycler)
         self._set_headers()
-        logger.info(f"Switched to a new API token.")
+        logger.warning(
+            f"Switched to a new API token."
+        )  # Keep this warning for visibility
 
     def _make_graphql_request(
         self, query: str, variables: dict = None, retries: int = 3
@@ -68,12 +71,16 @@ class GitHubExtractor:
             requests.exceptions.RequestException: For persistent network-related errors.
             ValueError: For persistent API errors or unexpected response structures.
         """
+        payload = {"query": query}
+        if variables:
+            payload["variables"] = variables
+
         for attempt in range(retries + 1):
             try:
                 response = requests.post(
                     self.api_url, headers=self.headers, json=payload
                 )
-                response.raise_for_status()  # Raise an HTTPError for bad responses (4xx or 5xx)
+                response.raise_for_status()  # Raise an HTTPError for bad responses
                 data = response.json()
 
                 # Handle GitHub GraphQL specific errors
@@ -81,7 +88,8 @@ class GitHubExtractor:
                     error_messages = [
                         err.get("message", "Unknown error") for err in data["errors"]
                     ]
-                    logger.error(
+                    # Log GraphQL errors at DEBUG level to avoid console clutter
+                    logger.debug(
                         f"GraphQL API returned errors: {'; '.join(error_messages)}"
                     )
                     # Check for rate limit specific errors within GraphQL response
@@ -105,7 +113,7 @@ class GitHubExtractor:
 
             except requests.exceptions.HTTPError as e:
                 status_code = e.response.status_code
-                logger.error(
+                logger.debug(
                     f"HTTP error during GraphQL request (Status: {status_code}): {e.response.text}"
                 )
                 if status_code == 429:  # Too Many Requests
@@ -121,7 +129,7 @@ class GitHubExtractor:
                 requests.exceptions.ConnectionError,
                 requests.exceptions.Timeout,
             ) as e:
-                logger.error(
+                logger.debug(
                     f"Network error during GraphQL request (Attempt {attempt + 1}/{retries + 1}): {e}"
                 )
                 if attempt < retries:
@@ -129,12 +137,12 @@ class GitHubExtractor:
                     continue
                 raise  # Re-raise if all retries fail
             except json.JSONDecodeError as e:
-                logger.error(
+                logger.debug(
                     f"Failed to decode JSON response: {e}. Response text: {response.text}"
                 )
                 raise
             except Exception as e:
-                logger.error(
+                logger.debug(
                     f"An unexpected error occurred during GraphQL request: {e}"
                 )
                 raise
@@ -160,21 +168,20 @@ class GitHubExtractor:
             else time.time()
         )
 
-        logger.info(
+        # Log rate limit status at DEBUG level to avoid console clutter
+        logger.debug(
             f"API Rate Limit Status (Current Token): Cost={cost}, Remaining={remaining}/{limit}, Reset at={datetime.fromtimestamp(reset_time_utc, tz=timezone.utc)}"
         )
 
         # If remaining is below a threshold, or exhausted, cycle token or sleep
-        if remaining < 100:
+        if remaining < 100:  # Proactive threshold, adjust as needed
             if len(self.api_tokens) > 1:
                 logger.warning(
                     f"Current token's rate limit low ({remaining}). Cycling to next token."
                 )
                 self._cycle_token()
             else:
-                sleep_duration = (
-                    max(0, reset_time_utc - time.time()) + 10
-                )  # Add a buffer
+                sleep_duration = max(0, reset_time_utc - time.time()) + 10  # Buffer
                 logger.warning(
                     f"Rate limit low and no other tokens available. Sleeping for {sleep_duration:.2f} seconds until reset."
                 )
@@ -241,8 +248,9 @@ class GitHubExtractor:
 
         try:
             response_data = self._make_graphql_request(query, variables)
-            # Handle rate limit
             return response_data.get("data", {}).get("repository")
         except Exception as e:
-            logger.error(f"Failed to fetch metadata for {owner}/{name}: {e}")
+            # This exception is caught by main.py, so we don't need to log it here
+            # at ERROR level, but we can log at DEBUG for internal debugging if needed.
+            logger.debug(f"Failed to fetch metadata for {owner}/{name}: {e}")
             return None

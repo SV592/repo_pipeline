@@ -1,14 +1,19 @@
 import csv
 import logging
 from tqdm import tqdm
+import sys
 
 from config import GITHUB_GRAPHQL_API_URL, GITHUB_API_TOKENS
-from github_extractor import GitHubExtractor
+from extractor import GitHubExtractor
 
+# Initially set to INFO to allow the "Successfully loaded" message
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# Set the logging level for the github_extractor to CRITICAL.
+logging.getLogger("extractor").setLevel(logging.CRITICAL)
 
 
 def load_repositories_from_csv(file_path: str) -> list[dict]:
@@ -34,23 +39,44 @@ def load_repositories_from_csv(file_path: str) -> list[dict]:
                     f"CSV file must contain all required columns: {', '.join(required_columns)}"
                 )
 
-            for row in reader:
-                owners_and_repo = row["owners_and_repo"]
-                if "/" in owners_and_repo:
-                    owner, repo_name = owners_and_repo.split(
+            for row_num, row in enumerate(
+                reader, start=2
+            ):  # Start from 2 for line numbers
+                owners_and_repo_raw = row.get(
+                    "owners_and_repo", ""
+                ).strip()  # Use .get() with default for safety
+
+                if not owners_and_repo_raw:
+                    # Use debug level
+                    logger.debug(
+                        f"Skipping row {row_num} due to empty 'owners_and_repo' value."
+                    )
+                    continue
+
+                if "/" in owners_and_repo_raw:
+                    owner, repo_name = owners_and_repo_raw.split(
                         "/", 1
                     )  # Split only on the first '/'
+
+                    # Ensure both owner and repo_name are not empty after splitting
+                    if not owner.strip() or not repo_name.strip():
+                        # Use debug level
+                        logger.debug(
+                            f"Skipping row {row_num} due to incomplete 'owner/name' format after split: '{owners_and_repo_raw}'"
+                        )
+                        continue
+
                     repositories.append(
                         {"owner": owner.strip(), "name": repo_name.strip()}
                     )
                 else:
-                    logger.warning(
-                        f"Skipping row due to invalid 'owners_and_repo' format: {owners_and_repo}"
+                    # Use debug level
+                    logger.debug(
+                        f"Skipping row {row_num} due to invalid 'owners_and_repo' format (no slash found): '{owners_and_repo_raw}'"
                     )
 
-        logger.info(
-            f"Successfully loaded {len(repositories)} repositories from {file_path}."
-        )
+        print(f"Successfully loaded {len(repositories)} repositories from {file_path}.")
+
     except FileNotFoundError:
         logger.error(f"Error: CSV file not found at {file_path}")
     except ValueError as e:
@@ -73,30 +99,39 @@ def main():
 
     extractor = GitHubExtractor(GITHUB_GRAPHQL_API_URL, GITHUB_API_TOKENS)
 
-    # Path to the CSV file
     csv_file_path = "repos.csv"
     repositories_to_process = load_repositories_from_csv(csv_file_path)
+
+    # After loading repositories and printing the "Successfully loaded" message,
+    # set the root logger level to ERROR to suppress further INFO/WARNING messages
+    # from main.py itself, allowing only critical errors and tqdm to show.
+    logger.setLevel(logging.ERROR)
 
     if not repositories_to_process:
         logger.error("No repositories to process. Exiting.")
         return
 
-    logger.info(
-        f"Starting extraction for {len(repositories_to_process)} repositories..."
-    )
+    failed_repos_count = 0  # Initialize counter for failed repositories
 
-    # Progress bar
-    for repo_info in tqdm(repositories_to_process, desc="Processing Repositories"):
-        owner = repo_info["owner"]
-        name = repo_info["name"]
-        repo_data = extractor.fetch_repository_metadata(owner, name)
+    # Use tqdm to show a progress bar
+    with tqdm(
+        repositories_to_process, desc="Processing Repositories", unit="repo"
+    ) as pbar:
+        for repo_info in pbar:
+            owner = repo_info["owner"]
+            name = repo_info["name"]
+            repo_data = extractor.fetch_repository_metadata(owner, name)
 
-        if repo_data:
-            pass  # Keep logging minimal
-        else:
-            logger.warning(f"Skipped {owner}/{name} due to extraction failure.")
+            if repo_data:
+                # In a real pipeline, you would pass this data to the transformation stage
+                pass
+            else:
+                failed_repos_count += 1
+                # Update the postfix of the tqdm bar with the current count of failures
+                pbar.set_postfix_str(f"Failed: {failed_repos_count}")
 
-    logger.info("Finished processing all specified repositories.")
+    # The final info message will remain suppressed as per your request for minimal output.
+    # logger.info(f"Finished processing all specified repositories. Total failed: {failed_repos_count}.")
 
 
 if __name__ == "__main__":
