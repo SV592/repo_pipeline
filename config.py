@@ -22,7 +22,10 @@ DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "password")
 DB_PORT = os.getenv("DB_PORT", "5432")
 
-#  Validation for tokens
+# Pipeline Failure Configuration
+FAILURE_LOG_FILE = os.getenv("FAILURE_LOG_FILE", "pipeline_failures.log")
+
+# Basic validation for essential configurations
 if not GITHUB_API_TOKENS:
     raise ValueError(
         "GITHUB_APP_INSTALLATION_TOKENS environment variable not set or empty. Please provide at least one token."

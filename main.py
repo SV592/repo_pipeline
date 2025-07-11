@@ -3,8 +3,10 @@ import logging
 from tqdm import tqdm
 import sys
 
-from config import GITHUB_GRAPHQL_API_URL, GITHUB_API_TOKENS
+from config import GITHUB_GRAPHQL_API_URL, GITHUB_API_TOKENS, FAILURE_LOG_FILE
 from extractor import GitHubExtractor
+from transformer import GitHubDataTransformer
+
 
 # Initially set to INFO to allow the "Successfully loaded" message
 logging.basicConfig(
@@ -12,8 +14,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Set the logging level for the github_extractor to CRITICAL.
+# Set the logging level for the extractor to CRITICAL.
 logging.getLogger("extractor").setLevel(logging.CRITICAL)
+
+# Set the logging level for the data_transformer to CRITICAL.
+logging.getLogger("transformer").setLevel(logging.CRITICAL)
+
+# Add a file handler for logging failures to a specified file
+file_handler = logging.FileHandler(FAILURE_LOG_FILE)
+file_handler.setLevel(logging.ERROR)  # Only log ERRORs to the file
+file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+file_handler.setFormatter(file_formatter)
+logger.addHandler(file_handler)
 
 
 def load_repositories_from_csv(file_path: str) -> list[dict]:
@@ -98,40 +110,54 @@ def main():
         return
 
     extractor = GitHubExtractor(GITHUB_GRAPHQL_API_URL, GITHUB_API_TOKENS)
+    transformer = GitHubDataTransformer()
 
     csv_file_path = "repos.csv"
     repositories_to_process = load_repositories_from_csv(csv_file_path)
 
     # After loading repositories and printing the "Successfully loaded" message,
-    # set the root logger level to ERROR to suppress further INFO/WARNING messages
-    # from main.py itself, allowing only critical errors and tqdm to show.
     logger.setLevel(logging.ERROR)
 
     if not repositories_to_process:
         logger.error("No repositories to process. Exiting.")
         return
 
-    failed_repos_count = 0  # Initialize counter for failed repositories
+    failed_extraction_count = 0
+    failed_transformation_count = 0
 
-    # Use tqdm to show a progress bar
     with tqdm(
         repositories_to_process, desc="Processing Repositories", unit="repo"
     ) as pbar:
         for repo_info in pbar:
             owner = repo_info["owner"]
             name = repo_info["name"]
+            repo_identifier = f"{owner}/{name}"  # For logging purposes
+
             repo_data = extractor.fetch_repository_metadata(owner, name)
 
             if repo_data:
-                # In a real pipeline, you would pass this data to the transformation stage
-                pass
-            else:
-                failed_repos_count += 1
-                # Update the postfix of the tqdm bar with the current count of failures
-                pbar.set_postfix_str(f"Failed: {failed_repos_count}")
+                transformed_repo_data = transformer.transform_repository_metadata(
+                    repo_data
+                )
 
-    # The final info message will remain suppressed as per your request for minimal output.
-    # logger.info(f"Finished processing all specified repositories. Total failed: {failed_repos_count}.")
+                if transformed_repo_data:
+                    # Data is now extracted and transformed.
+                    pass
+                else:
+                    failed_transformation_count += 1
+                    # Log to file: Transformation failed for this repo
+                    logger.error(
+                        f"Transformation failed for repository: {repo_identifier}. Raw data: {repo_data}"
+                    )
+            else:
+                failed_extraction_count += 1
+                # Log to file: Extraction failed for this repo
+                logger.error(f"Extraction failed for repository: {repo_identifier}.")
+
+            # Update the postfix of the tqdm bar once per iteration, after all counts are updated
+            pbar.set_postfix_str(
+                f"Extract Fail: {failed_extraction_count}, Transform Fail: {failed_transformation_count}"
+            )
 
 
 if __name__ == "__main__":
