@@ -10,7 +10,6 @@ This project implements an Extract, Transform, Load (ETL) pipeline designed to c
 4.  [Setup Instructions](#setup-instructions)
     * [Prerequisites](#prerequisites)
     * [Clone the Repository](#clone-the-repository)
-    * [Create a Virtual Environment](#create-a-virtual-environment)
     * [Install Dependencies](#install-dependencies)
     * [GitHub API Token Setup](#github-api-token-setup)
     * [PostgreSQL Database Setup](#postgresql-database-setup)
@@ -61,37 +60,6 @@ git clone [https://github.com/SV592/repo_pipeline.git](https://github.com/SV592/
 cd repo_pipeline
 
 ```
-
-### Create a Virtual Environment
-
-It's highly recommended to use a virtual environment to manage project dependencies:
-
-Bash
-
-```
-python -m venv venv
-
-```
-
-### Activate the Virtual Environment
-
--   **On Windows:**
-
-    Bash
-
-    ```
-    .\venv\Scripts\activate
-
-    ```
-
--   **On macOS/Linux:**
-
-    Bash
-
-    ```
-    source venv/bin/activate
-
-    ```
 
 ### Install Dependencies
 
