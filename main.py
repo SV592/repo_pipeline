@@ -9,63 +9,58 @@ from transformer import GitHubDataTransformer
 from loader import PostgreSQLDataLoader
 from config import DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT
 
-# This helps prevent UnicodeEncodeError on Windows terminals when printing or logging.
 try:
     if sys.stdout.encoding != "utf-8":
         sys.stdout.reconfigure(encoding="utf-8")
     if sys.stderr.encoding != "utf-8":
         sys.stderr.reconfigure(encoding="utf-8")
 except Exception as e:
-    # This block is for cases where reconfigure might not be available (e.g., older Python versions)
-    # or if the stream is not reconfigurable. Log but don't stop execution.
+    # Cases where reconfigure might not be available
     print(
         f"Warning: Could not reconfigure stdout/stderr to UTF-8: {e}. Output encoding issues might persist."
     )
 
 
-# Configure logging for the main script
-# Set level to INFO for initial messages (like "Successfully loaded").
-# Use handlers=[] in basicConfig to prevent it from setting up a default console handler for the root logger.
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[],  # Prevents default console handler from being created by basicConfig
-)
-
-# Get the logger for this module (e.g., 'main')
-logger = logging.getLogger(__name__)
-
-# IMPORTANT: Aggressively remove all existing handlers from the root logger and disable propagation.
-# This is the most reliable way to prevent unwanted console logging from the 'logging' module.
+# Get the root logger
 root_logger = logging.getLogger()
-for handler in root_logger.handlers[:]:  # Iterate over a copy to safely modify
+# Remove all existing handlers from the root logger
+for handler in root_logger.handlers[:]:
     root_logger.removeHandler(handler)
-root_logger.propagate = False  # Prevent messages from propagating to higher loggers (which might have console handlers)
+# Prevent messages from propagating to higher loggers
+root_logger.propagate = False
+# Set the default level for the root logger
+root_logger.setLevel(
+    logging.DEBUG
+)  # Set a low level so all messages can be filtered by specific handlers
 
-# Also ensure the specific module logger doesn't propagate if it somehow got a handler
+# Get the logger for main
+logger = logging.getLogger(__name__)
+# Ensure this logger also doesn't propagate to the root logger
+logger.propagate = False
+# Remove any handlers that might have been implicitly added to this specific logger
 for handler in logger.handlers[:]:
     logger.removeHandler(handler)
-logger.propagate = False
 
 
-# Set the logging level for specific modules to CRITICAL to suppress their console output
-logging.getLogger("extractor").setLevel(logging.CRITICAL)
-logging.getLogger("data_transformer").setLevel(
-    logging.CRITICAL
-)  # Keep this at CRITICAL for now
-
-# TEMPORARY CHANGE: Set the logging level for the pg_loader to INFO.
-# This will allow us to see internal messages from pg_loader for debugging the load error.
-logging.getLogger("pg_loader").setLevel(logging.INFO)
-
-
-# Add a file handler for logging failures to a specified file
 # Ensure explicit UTF-8 encoding for the log file to prevent UnicodeEncodeError.
 file_handler = logging.FileHandler(FAILURE_LOG_FILE, encoding="utf-8")
-file_handler.setLevel(logging.ERROR)  # Only log ERRORs to this file handler
-file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+file_formatter = logging.Formatter(
+    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 file_handler.setFormatter(file_formatter)
+# Set the file handler to capture INFO and above for debugging purposes
+file_handler.setLevel(logging.INFO)
 logger.addHandler(file_handler)  # Add the file handler to the __main__ logger
+
+
+# Set logging levels for specific modules:
+logging.getLogger("extractor").setLevel(logging.CRITICAL)
+# Transformer: CRITICAL
+logging.getLogger("data_transformer").setLevel(logging.CRITICAL)
+# Loader: CRITICAL
+logging.getLogger("pg_loader").setLevel(logging.CRITICAL)
+
+# --- End Logging Configuration ---
 
 
 def load_repositories_from_csv(file_path: str) -> list[dict]:
@@ -142,7 +137,7 @@ def load_repositories_from_csv(file_path: str) -> list[dict]:
 def main():
     """
     Main function to demonstrate the GitHubExtractor with multiple repositories
-    loaded from a CSV file and tqdm.
+    loaded from a CSV file and tqdm, focusing only on project metadata.
     """
     if not GITHUB_API_TOKENS:
         logger.error(
@@ -164,9 +159,8 @@ def main():
     csv_file_path = "repos.csv"
     repositories_to_process = load_repositories_from_csv(csv_file_path)
 
-    # Set the logger level for this module. With propagation disabled and no console handlers,
-    # this primarily controls what gets written to the file_handler.
-    logger.setLevel(logging.ERROR)
+    # Set the logger level
+    logger.setLevel(logging.ERROR)  # Only ERRORs from `main` to the file handler
 
     if not repositories_to_process:
         logger.error("No repositories to process. Exiting.")
@@ -174,19 +168,11 @@ def main():
 
     failed_extraction_count = 0
     failed_transformation_count = 0
-
-    # Counters for successful loads for each table
     successful_project_loads = 0
-    successful_topic_loads = 0
-    successful_build_config_loads = 0
-    successful_dependency_loads = 0
 
-    # Batching for database inserts for each table type
-    batch_size = 100  # Adjust based on performance and API limits
+    # Batching for database inserts
+    batch_size = 100
     projects_batch = []
-    topics_batch = []
-    build_configs_batch = []
-    dependencies_batch = []
 
     with tqdm(
         repositories_to_process, desc="Processing Repositories", unit="repo"
@@ -199,26 +185,21 @@ def main():
             raw_repo_data = extractor.fetch_repository_metadata(owner, name)
 
             if raw_repo_data:
-                # Use transform_all_data to get all structured data
-                transformed_data = transformer.transform_all_data(raw_repo_data)
+                # Only call transform_repository_metadata as we are focusing on project data
+                transformed_project_data = transformer.transform_repository_metadata(
+                    raw_repo_data
+                )
 
-                if transformed_data[
-                    "projects"
-                ]:  # Check if core project data transformed successfully
-                    projects_batch.append(transformed_data["projects"])
-                    topics_batch.extend(transformed_data["topics"])
-                    build_configs_batch.extend(transformed_data["build_configs"])
-                    dependencies_batch.extend(transformed_data["dependencies"])
+                if (
+                    transformed_project_data
+                ):  # Check if core project data transformed successfully
+                    projects_batch.append(transformed_project_data)
 
-                    # Check if any batch is full or if it's the last repository
+                    # Check if batch is full or if it's the last repository
                     is_last_repo = pbar.n == len(repositories_to_process) - 1
 
                     # Load projects batch
                     if len(projects_batch) >= batch_size or is_last_repo:
-                        # TEMPORARY DEBUG: Log the batch data before loading
-                        logger.info(
-                            f"Attempting to load projects batch. Data: {projects_batch}"
-                        )
                         try:
                             db_loader.load_project_data(projects_batch)
                             successful_project_loads += len(projects_batch)
@@ -227,43 +208,12 @@ def main():
                             logger.error(
                                 f"Failed to load project batch to DB. Error: {e}. Batch size: {len(projects_batch)}"
                             )
+                            # Log individual failures in the batch if needed for debugging
+                            for failed_item in projects_batch:
+                                logger.error(
+                                    f"Failed to load single repo to DB: {failed_item.get('owner_login')}/{failed_item.get('name')}"
+                                )
                             projects_batch = []  # Clear batch even on failure
-
-                    # Load topics batch
-                    if len(topics_batch) >= batch_size or is_last_repo:
-                        try:
-                            db_loader.load_topics_data(topics_batch)
-                            successful_topic_loads += len(topics_batch)
-                            topics_batch = []
-                        except Exception as e:
-                            logger.error(
-                                f"Failed to load topics batch to DB. Error: {e}. Batch size: {len(topics_batch)}"
-                            )
-                            topics_batch = []
-
-                    # Load build configs batch
-                    if len(build_configs_batch) >= batch_size or is_last_repo:
-                        try:
-                            db_loader.load_build_configs_data(build_configs_batch)
-                            successful_build_config_loads += len(build_configs_batch)
-                            build_configs_batch = []
-                        except Exception as e:
-                            logger.error(
-                                f"Failed to load build configs batch to DB. Error: {e}. Batch size: {len(build_configs_batch)}"
-                            )
-                            build_configs_batch = []
-
-                    # Load dependencies batch
-                    if len(dependencies_batch) >= batch_size or is_last_repo:
-                        try:
-                            db_loader.load_dependencies_data(dependencies_batch)
-                            successful_dependency_loads += len(dependencies_batch)
-                            dependencies_batch = []
-                        except Exception as e:
-                            logger.error(
-                                f"Failed to load dependencies batch to DB. Error: {e}. Batch size: {len(dependencies_batch)}"
-                            )
-                            dependencies_batch = []
 
                 else:
                     failed_transformation_count += 1
@@ -277,16 +227,11 @@ def main():
             # Update the postfix of the tqdm bar once per iteration
             pbar.set_postfix_str(
                 f"Extract Fail: {failed_extraction_count}, Transform Fail: {failed_transformation_count}, "
-                f"Projects Loaded: {successful_project_loads}, Topics Loaded: {successful_topic_loads}, "
-                f"Configs Loaded: {successful_build_config_loads}, Deps Loaded: {successful_dependency_loads}"
+                f"Projects Loaded: {successful_project_loads}"
             )
 
     # Final check for any remaining items in the batches after the loop finishes
-    # This ensures any partial batches are loaded
     if projects_batch:
-        logger.info(
-            f"Attempting to load final projects batch. Data: {projects_batch}"
-        )  # TEMPORARY DEBUG
         try:
             db_loader.load_project_data(projects_batch)
             successful_project_loads += len(projects_batch)
@@ -294,40 +239,26 @@ def main():
             logger.error(
                 f"Failed to load final project batch to DB. Error: {e}. Batch size: {len(projects_batch)}"
             )
-
-    if topics_batch:
-        try:
-            db_loader.load_topics_data(topics_batch)
-            successful_topic_loads += len(topics_batch)
-        except Exception as e:
-            logger.error(
-                f"Failed to load final topics batch to DB. Error: {e}. Batch size: {len(topics_batch)}"
-            )
-
-    if build_configs_batch:
-        try:
-            db_loader.load_build_configs_data(build_configs_batch)
-            successful_build_config_loads += len(build_configs_batch)
-        except Exception as e:
-            logger.error(
-                f"Failed to load final build configs batch to DB. Error: {e}. Batch size: {len(build_configs_batch)}"
-            )
-
-    if dependencies_batch:
-        try:
-            db_loader.load_dependencies_data(dependencies_batch)
-            successful_dependency_loads += len(dependencies_batch)
-        except Exception as e:
-            logger.error(
-                f"Failed to load final dependencies batch to DB. Error: {e}. Batch size: {len(dependencies_batch)}"
-            )
+            for failed_item in projects_batch:
+                logger.error(
+                    f"Failed to load single repo to DB (final batch): {failed_item.get('owner_login')}/{failed_item.get('name')}"
+                )
 
     db_loader.close()  # Close the database connection after all processing
+
+    # Print a success message
+    print(
+        f"\nPipeline finished successfully! "
+        f"Total Repositories Processed: {len(repositories_to_process)}. "
+        f"Projects Loaded to DB: {successful_project_loads}. "
+        f"Extraction Failures: {failed_extraction_count}. "
+        f"Transformation Failures: {failed_transformation_count}."
+    )
+    # Log the info message to the file
     logger.info(
         f"Pipeline finished. "
         f"Extracted Fail: {failed_extraction_count}, Transformed Fail: {failed_transformation_count}, "
-        f"Projects Loaded: {successful_project_loads}, Topics Loaded: {successful_topic_loads}, "
-        f"Configs Loaded: {successful_build_config_loads}, Deps Loaded: {successful_dependency_loads}"
+        f"Projects Loaded: {successful_project_loads}"
     )
 
 

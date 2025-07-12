@@ -1,14 +1,11 @@
-# pg_loader.py
 import psycopg2
-from psycopg2 import extras  # For batch inserts
-from psycopg2 import sql  # For safe SQL query composition
+from psycopg2 import extras
+from psycopg2 import sql
 import logging
 from typing import List, Dict, Any
-from datetime import datetime, timezone  # Import timezone for handling datetime objects
+from datetime import datetime, timezone
 
 # Configure logging for the PostgreSQL loader
-# Set level to INFO for internal debugging within the pg_loader module.
-# The main.py script will set this logger to CRITICAL for console output.
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
@@ -115,42 +112,10 @@ class PostgreSQLDataLoader:
                 last_extracted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             );
             """,
-            """
-            CREATE TABLE IF NOT EXISTS project_topics (
-                project_id VARCHAR(255) REFERENCES projects(id) ON DELETE CASCADE,
-                topic VARCHAR(255) NOT NULL,
-                PRIMARY KEY (project_id, topic)
-            );
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS project_build_configs (
-                id SERIAL PRIMARY KEY,
-                project_id VARCHAR(255) REFERENCES projects(id) ON DELETE CASCADE,
-                file_path VARCHAR(500) NOT NULL,
-                config_type VARCHAR(100), -- e.g., 'package.json', 'pom.xml', 'Dockerfile'
-                parsed_content JSONB, -- Store parsed JSON/YAML data here
-                raw_content TEXT, -- Store raw file content
-                UNIQUE (project_id, file_path)
-            );
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS project_dependencies (
-                id SERIAL PRIMARY KEY,
-                project_id VARCHAR(255) REFERENCES projects(id) ON DELETE CASCADE,
-                package_name VARCHAR(255) NOT NULL,
-                version VARCHAR(255),
-                dependency_type VARCHAR(100), -- e.g., 'runtime', 'dev', 'optional'
-                UNIQUE (project_id, package_name, dependency_type)
-            );
-            """,
         ]
         try:
             self.connect()  # Ensure connection is open
-            for (
-                sql_query
-            ) in (
-                create_table_sqls
-            ):  # Renamed variable to avoid conflict with imported 'sql'
+            for sql_query in create_table_sqls:
                 self._execute_query(sql_query, commit=True)
             logger.info("All necessary tables ensured to exist.")
         except psycopg2.Error as e:
@@ -170,7 +135,7 @@ class PostgreSQLDataLoader:
             logger.debug("No project data to load.")
             return
 
-        # Explicitly define columns to ensure order and correctness
+        # Columns
         project_columns = [
             "id",
             "name",
@@ -221,8 +186,7 @@ class PostgreSQLDataLoader:
         try:
             self.connect()  # Ensure connection is open
             with self.conn.cursor() as cur:
-                # execute_values expects the query as a string or Composed object,
-                # and the data as a list of tuples.
+                # execute_values expects the query as a string or Composed object
                 extras.execute_values(cur, upsert_sql, data_to_insert, page_size=1000)
                 self.conn.commit()
             logger.info(
