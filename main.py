@@ -9,20 +9,23 @@ from transformer import GitHubDataTransformer
 from loader import PostgreSQLDataLoader
 from config import DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT
 
-# Prevents UnicodeEncodeError on Windows terminals when printing or logging.
+# This helps prevent UnicodeEncodeError on Windows terminals when printing or logging.
 try:
     if sys.stdout.encoding != "utf-8":
         sys.stdout.reconfigure(encoding="utf-8")
     if sys.stderr.encoding != "utf-8":
         sys.stderr.reconfigure(encoding="utf-8")
 except Exception as e:
-    # Cases where reconfigure might not be available
+    # This block is for cases where reconfigure might not be available (e.g., older Python versions)
+    # or if the stream is not reconfigurable. Log but don't stop execution.
     print(
         f"Warning: Could not reconfigure stdout/stderr to UTF-8: {e}. Output encoding issues might persist."
     )
 
 
 # Configure logging for the main script
+# Set level to INFO for initial messages (like "Successfully loaded").
+# Use handlers=[] in basicConfig to prevent it from setting up a default console handler for the root logger.
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -32,6 +35,8 @@ logging.basicConfig(
 # Get the logger for this module (e.g., 'main')
 logger = logging.getLogger(__name__)
 
+# IMPORTANT: Aggressively remove all existing handlers from the root logger and disable propagation.
+# This is the most reliable way to prevent unwanted console logging from the 'logging' module.
 root_logger = logging.getLogger()
 for handler in root_logger.handlers[:]:  # Iterate over a copy to safely modify
     root_logger.removeHandler(handler)
@@ -48,15 +53,19 @@ logging.getLogger("extractor").setLevel(logging.CRITICAL)
 logging.getLogger("data_transformer").setLevel(
     logging.CRITICAL
 )  # Keep this at CRITICAL for now
-logging.getLogger("pg_loader").setLevel(logging.CRITICAL)
+
+# TEMPORARY CHANGE: Set the logging level for the pg_loader to INFO.
+# This will allow us to see internal messages from pg_loader for debugging the load error.
+logging.getLogger("pg_loader").setLevel(logging.INFO)
 
 
 # Add a file handler for logging failures to a specified file
+# Ensure explicit UTF-8 encoding for the log file to prevent UnicodeEncodeError.
 file_handler = logging.FileHandler(FAILURE_LOG_FILE, encoding="utf-8")
 file_handler.setLevel(logging.ERROR)  # Only log ERRORs to this file handler
 file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 file_handler.setFormatter(file_formatter)
-logger.addHandler(file_handler)
+logger.addHandler(file_handler)  # Add the file handler to the __main__ logger
 
 
 def load_repositories_from_csv(file_path: str) -> list[dict]:
@@ -118,6 +127,7 @@ def load_repositories_from_csv(file_path: str) -> list[dict]:
                         f"Skipping row {row_num} due to invalid 'owners_and_repo' format (no slash found): '{owners_and_repo_raw}'"
                     )
 
+        # Use print() for this message as it's a direct user feedback, not a log.
         print(f"Successfully loaded {len(repositories)} repositories from {file_path}.")
 
     except FileNotFoundError:
@@ -155,6 +165,7 @@ def main():
     repositories_to_process = load_repositories_from_csv(csv_file_path)
 
     # Set the logger level for this module. With propagation disabled and no console handlers,
+    # this primarily controls what gets written to the file_handler.
     logger.setLevel(logging.ERROR)
 
     if not repositories_to_process:
@@ -204,6 +215,10 @@ def main():
 
                     # Load projects batch
                     if len(projects_batch) >= batch_size or is_last_repo:
+                        # TEMPORARY DEBUG: Log the batch data before loading
+                        logger.info(
+                            f"Attempting to load projects batch. Data: {projects_batch}"
+                        )
                         try:
                             db_loader.load_project_data(projects_batch)
                             successful_project_loads += len(projects_batch)
@@ -267,7 +282,11 @@ def main():
             )
 
     # Final check for any remaining items in the batches after the loop finishes
+    # This ensures any partial batches are loaded
     if projects_batch:
+        logger.info(
+            f"Attempting to load final projects batch. Data: {projects_batch}"
+        )  # TEMPORARY DEBUG
         try:
             db_loader.load_project_data(projects_batch)
             successful_project_loads += len(projects_batch)
