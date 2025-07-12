@@ -72,8 +72,6 @@ pip install -r requirements.txt
 
 ```
 
-*(If `requirements.txt` doesn't exist, you'll need to create it first by running `pip freeze > requirements.txt` after manually installing `requests`, `psycopg2-binary`, `python-dotenv`, `tqdm`.)*
-
 ### GitHub API Token Setup
 
 1.  **Generate a GitHub PAT:**
