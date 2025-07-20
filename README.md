@@ -19,13 +19,13 @@ This project implements an Extract, Transform, Load (ETL) pipeline designed to c
 
 ## Project Overview
 
-This ETL pipeline automates the process of gathering structured data from GitHub. It's built to be robust, handling API rate limits, transforming raw data, and efficiently loading it into a relational database for analysis or further use. Currently, it focuses on extracting core metadata for specified GitHub repositories.
+This ETL pipeline automates the process of gathering structured data from GitHub. It's built to be robust, handling API rate limits, transforming raw data, and loading it into a relational database for further use.
 
 ## Features
 
 * **Extract:** Fetches repository metadata from the GitHub GraphQL API.
     * Handles API rate limits and retries using multiple GitHub Personal Access Tokens (PATs).
-* **Transform:** Processes raw JSON data from the API into a flattened, structured format suitable for database insertion. Currently focuses on project-level metadata.
+* **Transform:** Processes raw JSON data from the API into a flattened, structured format suitable for database insertion.
 * **Load:** Inserts transformed data into a PostgreSQL database.
     * Utilizes `psycopg2.extras.execute_values` for efficient batch insertions/upserts.
     * Ensures database tables are created if they don't exist.
@@ -104,13 +104,11 @@ pip install -r requirements.txt
 
     ```
 
-4.  **Ensure `.env` is in `.gitignore`:** Make sure your `.gitignore` file (also in the project root) contains the line `/.env` to prevent accidentally committing your token to version control.
-
 ### PostgreSQL Database Setup
 
 1.  **Ensure PostgreSQL Server is Running:** Verify your PostgreSQL server is active.
 
-2.  **Create the Database:** You need to create a database named `github_data` (or whatever you set `DB_NAME` to in `.env`).
+2.  **Create the Database:** You need to create a database named `github_data`.
 
     -   **Using `psql` (command line):**
 
@@ -132,7 +130,7 @@ pip install -r requirements.txt
 
         -   Enter `github_data` as the "Database" name and click "Save".
 
-3.  **Configure `.env` for Database Connection:** Add the following lines to your `.env` file, adjusting values if your PostgreSQL setup is different (e.g., different user, password, or host):
+3.  **Configure `.env` for Database Connection:** Add the following lines to your `.env` file, adjusting values if your PostgreSQL setup is different:
 
     Code snippet
 
@@ -152,8 +150,6 @@ How to Run
 
 2.  **Ensure `repos.csv` exists** in the project root with the correct format (`name`, `num_downloads`, `owners_and_repo`). An example `repos.csv` might look like:
 
-    Code snippet
-
     ```
     name,num_downloads,owners_and_repo
     supports-color,221147395,chalk/supports-color
@@ -170,7 +166,7 @@ How to Run
 
     ```
 
-You will see a progress bar in your console. Any errors or detailed logs will be written to `pipeline_failures.log`. Upon successful completion, a summary message will be printed to the console.
+You will see a progress bar in your console. Any errors or detailed logs will be written to `pipeline_failures.log`.
 
 Project Structure
 -----------------
@@ -182,8 +178,8 @@ repo_pipeline/
 ├── main.py               # Orchestrates the ETL pipeline
 ├── config.py             # Loads configurations and environment variables
 ├── extractor.py          # Handles GitHub GraphQL API extraction
-├── data_transformer.py   # Transforms raw GitHub data (project metadata only)
-├── pg_loader.py          # Loads transformed data into PostgreSQL
+├── transformer.py   # Transforms raw GitHub data (project metadata only)
+├── loader.py          # Loads transformed data into PostgreSQL
 ├── repos.csv             # Input CSV file with repositories to process
 └── pipeline_failures.log # Log file for errors and pipeline events
 ```
